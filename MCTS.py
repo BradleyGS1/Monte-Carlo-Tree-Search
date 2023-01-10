@@ -2,7 +2,8 @@ import random
 import math
 import numpy as np
 import networkx as nx
-import pygraphviz as pgv
+import pygraphviz
+import pickle
 
 # Define Noughts and Crosses
 class NoughtsCrosses(object):
@@ -21,10 +22,16 @@ class NoughtsCrosses(object):
                     legal_moves.append(move)
 
         return legal_moves
-    
+            
+    # This function does not test if the move is legal
     def push(self, move:tuple):
         self.board[move[0], move[1]] = 2 * self.turn - 1
         self.turn = not self.turn 
+    
+    # This function does not test if the moves are legal
+    def push_prev_moves(self, moves:list):
+        for move in moves:
+            self.push(move)
 
     def winner(self, legal_moves:list = None):
         three_in_row = [i in np.sum(self.board, axis = 0) for i in [-3, 3]]
@@ -48,10 +55,24 @@ class MCTS(object):
     def __init__(self):
         # Initialise tree
         self.tree = nx.DiGraph()
-        self.tree.add_node(0, move = "*", wins = 0, visits = 0, ucb = 0)
+        self.tree.add_node(0, move = "*", wins = 0.0, visits = 0.0, ucb = 0.0)
+
+    def save_to_file(self, fn:str = "MCTS Model.pkl"):
+        file = open(fn, "wb")
+        # Save the fitted tree as a pickle file
+        pickle.dump(self.tree, file)
+        file.close()
+        print(f"MCTS model saved as {fn}")
+
+    def load_from_file(self, fn:str = "MCTS Model.pkl"):
+        # Load the fitted tree from a pickle file
+        file = open(fn, "rb")
+        self.tree = pickle.load(file)
+        file.close()
+        print(f"MCTS model loaded from {fn}")
 
     def train(self, env:object, num_samples:int = 100, save_img:bool = False):
-        tree = self.tree
+        tree = self.tree        
         for _ in range(0, num_samples):
             # Re-initialise the environment
             env.__init__()
@@ -130,20 +151,21 @@ class MCTS(object):
             # Given the result of the simulation stage we can backpropogate the win
             # rewards back towards the visited nodes respective of the player who visited
 
-            for i in range(0, len(visited_nodes)):
-                node = visited_nodes[i]
-
+            for i, node in enumerate(visited_nodes):
                 tree.nodes[node]["visits"] += 1.0
-                if winner == "Draw":
+                if i == 0:
+                    tree.nodes[node]["wins"] += 1
+
+                elif winner == "Draw":
                     tree.nodes[node]["wins"] += 0.5
 
-                elif (winner == True) and (i % 2 == 0):
+                elif (winner == True) and (i % 2 == 1):
                     tree.nodes[node]["wins"] += 1.0    
 
-                elif (winner == False) and (i % 2 == 1):
-                    tree.nodes[node]["wins"] += 1.0
+                elif (winner == False) and (i % 2 == 0):
+                    tree.nodes[node]["wins"] += 1.0 
 
-            # Update the win, visit, ucb values for all visited nodes
+            # Update the ucb values for all visited nodes
             for node in visited_nodes[1:]:
                 # Get needed attributes from visited node and its parent
                 node_wins = tree.nodes[node]["wins"]
@@ -214,6 +236,42 @@ env = NoughtsCrosses()
 
 # Run Monte Carlo Tree Search
 mcts = MCTS()
-mcts.train(env, num_samples = 500, save_img = True)
-prev_moves = [(0, 0), (1, 0), (0, 1), (1, 1)]
-mcts.optimal_move(prev_moves)
+mcts.train(env, num_samples = 10000)
+mcts.save_to_file()
+
+# Test the model with player 1 picking the optimal legal moves from the tree
+# and player 2 picking purely random legal moves
+
+# Load the Monte Carlo Tree Search model
+mcts = MCTS()
+mcts.load_from_file()
+
+# Initialise a Noughts and Crosses environment
+env = NoughtsCrosses()
+legal_moves = env.get_legal_moves()
+winner = "None"
+
+prev_moves = []
+while len(legal_moves) != 0 and winner == "None":
+    if env.turn:
+        # Get optimal move for player 1 based on previous turns
+        move = mcts.optimal_move(prev_moves)
+    else:
+        # Pick random move for player 2
+        print(legal_moves)
+        move_index = int(input())
+        move = legal_moves[move_index]
+    # Append move to list
+    prev_moves.append(move)
+
+    # Push move to environment
+    env.push(move)
+    print(f"Player{1+int(env.turn)} plays: {move}")
+    print(env.board)
+
+    # Update legal_moves, winner
+    legal_moves = env.get_legal_moves()
+    winner = env.winner(legal_moves = legal_moves)
+
+print(f"Winner: {winner}")
+print(prev_moves)
