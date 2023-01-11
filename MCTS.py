@@ -1,9 +1,12 @@
 import random
+import time
 import math
+import pickle
 import numpy as np
 import networkx as nx
 import pygraphviz
-import pickle
+from matplotlib.colors import ListedColormap
+from matplotlib import pyplot as plt
 
 # Define Noughts and Crosses
 class NoughtsCrosses(object):
@@ -72,6 +75,7 @@ class MCTS(object):
         print(f"MCTS model loaded from {fn}")
 
     def train(self, env:object, num_samples:int = 100, save_img:bool = False):
+        start_time = time.time()
         tree = self.tree        
         for _ in range(0, num_samples):
             # Re-initialise the environment
@@ -118,16 +122,18 @@ class MCTS(object):
             # Add this new child node to the tree if not already on and visited nodes list
 
             if winner == "None":
-                # Pick a random legal_move from the current environment state
-                move = random.choice(legal_moves)
+                # Get a list of all the unsampled child moves (uses set difference)
+                child_nodes = tree.successors(visited_nodes[-1])
+                child_moves = [tree.nodes[child_node]["move"] for child_node in child_nodes]
+                unsampled_moves = set(legal_moves).difference(set(child_moves))
 
-                # If the current node has no children which represents this new move
-                # then we add a new child to the current node
-                if move not in child_moves:
-                    new_node = tree.number_of_nodes()
-                    # Add the new node and edge with attributes to the current leaf node
-                    tree.add_node(new_node, move = move, wins = 0.0, visits = 0.0, ucb = 0.0)
-                    tree.add_edge(visited_nodes[-1], new_node)
+                # Pick a random unsampled child move of the current node
+                move = random.choice(list(unsampled_moves))
+
+                # Add the new node and edge with attributes to the current leaf node
+                new_node = tree.number_of_nodes()
+                tree.add_node(new_node, move = move, wins = 0.0, visits = 0.0, ucb = 0.0)
+                tree.add_edge(visited_nodes[-1], new_node)
                 
                 # Add the new node to the visited nodes list
                 visited_nodes.append(new_node)
@@ -199,48 +205,66 @@ class MCTS(object):
 
         # Update the object initialised tree variable
         self.tree = tree
-        print("Tree Fitted")
+        end_time = time.time()
+        run_time = round(end_time - start_time, ndigits = 3)
+        print(f"Tree Fitted (No. Nodes: {tree.number_of_nodes()}, Run Time: {run_time}s)")
 
     def optimal_move(self, prev_moves:list):
+        # Function that prints red text (used for errors)
+        def prRed(text:str): 
+            print(f"\033[91m {text}\033[00m")
+
         tree = self.tree
         node = 0
-        child_nodes = tree.successors(0)
+        child_nodes = list(tree.successors(0))
         for move in prev_moves:
-            # Get the next node using what the previous moves have been
-            for child_node in child_nodes:
-                if tree.nodes[child_node]["move"] == move:
-                    node = child_node
-                    break
+            # If the tree contains child nodes of this node then we get the optimal child node
+            if len(child_nodes) != 0:
+                # Get the next node using what the previous moves have been
+                for child_node in child_nodes:
+                    if tree.nodes[child_node]["move"] == move:
+                        node = child_node
+                        break
 
-            # Update child nodes of new node
-            child_nodes = tree.successors(node)
+                # Get new child nodes
+                child_nodes = list(tree.successors(node))
+            else:
+                break
         
         # Now we have the node representing the most recent move played we can
         # get the optimal move by choosing the next node with the most visits
-        visits_values = {}
-        for child_node in child_nodes:
-            visits_values[child_node] = tree.nodes[child_node]["visits"]
+        if len(child_nodes) != 0:
+            visits_values = {}
+            for child_node in child_nodes:
+                visits_values[child_node] = tree.nodes[child_node]["visits"]
 
-        # Get new node (choose node with maximum visits value)
-        optimal_node = max(visits_values, key = visits_values.get)
+            # Get new node (choose node with maximum visits value)
+            optimal_node = max(visits_values, key = visits_values.get)
 
-        # Get optimal move
-        optimal_move = tree.nodes[optimal_node]["move"]
+            # Get optimal move
+            optimal_move = tree.nodes[optimal_node]["move"]
 
-        return optimal_move
+            return optimal_move
 
+        else:
+            # If the tree doesn't contain child nodes at this node then function returns nothing
+            prRed("WARNING: Couldn't Find Optimal Move")
 
+            return None
+            
 
 # Initialise Noughts and Crosses game
 env = NoughtsCrosses()
 
 # Run Monte Carlo Tree Search
+"""
 mcts = MCTS()
-mcts.train(env, num_samples = 10000)
+mcts.train(env, num_samples = 500000)
 mcts.save_to_file()
+"""
 
-# Test the model with player 1 picking the optimal legal moves from the tree
-# and player 2 picking purely random legal moves
+# ---------------------------------------------------------------------#
+# Testing the model
 
 # Load the Monte Carlo Tree Search model
 mcts = MCTS()
@@ -253,21 +277,30 @@ winner = "None"
 
 prev_moves = []
 while len(legal_moves) != 0 and winner == "None":
+    move = None
     if env.turn:
         # Get optimal move for player 1 based on previous turns
-        move = mcts.optimal_move(prev_moves)
+        optimal_move = mcts.optimal_move(prev_moves)
+        # If the optimal move can't be found in the tree simulate a random move
+        if optimal_move == None:
+            move = random.choice(legal_moves)
+        else:
+            move = optimal_move
+
     else:
-        # Pick random move for player 2
-        print(legal_moves)
-        move_index = int(input())
-        move = legal_moves[move_index]
+        # Pick completely random move for player 2
+        move = random.choice(legal_moves)
+
     # Append move to list
     prev_moves.append(move)
 
     # Push move to environment
     env.push(move)
     print(f"Player{1+int(env.turn)} plays: {move}")
-    print(env.board)
+    plt.subplot(3, 3, len(prev_moves))
+    plt.imshow(env.board, vmin = -1, vmax = 1, cmap = ListedColormap(["r", "w", "b"]))
+    plt.xticks([0, 1, 2])
+    plt.yticks([0, 1, 2])
 
     # Update legal_moves, winner
     legal_moves = env.get_legal_moves()
@@ -275,3 +308,4 @@ while len(legal_moves) != 0 and winner == "None":
 
 print(f"Winner: {winner}")
 print(prev_moves)
+plt.show()
